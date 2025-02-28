@@ -1,75 +1,116 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
 
 # 📂 Load Data
-file_path = "./worldometer_coronavirus_summary_data.csv"
+file_path = "./owid-monkeypox-data.csv"  # Replace with your actual path
 df = pd.read_csv(file_path)
 
+# Convert date column to datetime format
+df["date"] = pd.to_datetime(df["date"])
+
 # 🌍 Page Title
-st.title("🌍 COVID-19 Worldometer Dashboard")
-
-# 🔍 Filter by Continent
-continents = df["continent"].dropna().unique()
-selected_continent = st.selectbox("🌎 Select Continent:", ["All"] + list(continents))
-
-# Filter the data if a continent is selected
-if selected_continent != "All":
-    df = df[df["continent"] == selected_continent]
+st.title("Monkeypox Data Visualization Dashboard")
 
 # 🏳️ Select a Country
-countries = df["country"].unique()
-selected_country = st.selectbox("🏳️ Select a Country:", countries)
+locations = df["location"].unique()
+selected_country = st.selectbox("🏳️ Select a Country:", locations)
 
-# 📊 Filter Data for the Selected Country
-country_data = df[df["country"] == selected_country].iloc[0]
+# 📅 **Date Range Selector**
+min_date, max_date = df["date"].min(), df["date"].max()
+date_range = st.date_input("📆 Select Date Range:", [min_date, max_date], min_value=min_date, max_value=max_date)
 
-# 📈 Show Key Metrics
-st.metric("Total Confirmed Cases", f"{country_data['total_confirmed']:,}")
-st.metric("Total Deaths", f"{country_data['total_deaths']:,}")
-st.metric("Total Recovered", f"{country_data['total_recovered']:,}")
-st.metric("Active Cases", f"{country_data['active_cases']:,}")
-st.metric("Serious/Critical Cases", f"{country_data['serious_or_critical']:,}")
+# 📊 **New Cases Threshold Filter**
+min_new_cases = int(df["new_cases"].min())
+max_new_cases = int(df["new_cases"].max())
+new_cases_threshold = st.slider("📈 Minimum New Cases:", min_value=min_new_cases, max_value=max_new_cases, value=min_new_cases)
 
-# 📊 Bar Chart: Total Cases, Deaths, and Recoveries
-st.subheader("📊 Total Cases Breakdown")
-fig_bar = px.bar(
-    x=["Total Confirmed", "Total Deaths", "Total Recovered"],
-    y=[country_data["total_confirmed"], country_data["total_deaths"], country_data["total_recovered"]],
-    labels={"x": "Category", "y": "Count"},
-    color=["Total Confirmed", "Total Deaths", "Total Recovered"],
-    title=f"COVID-19 Cases Breakdown in {selected_country}",
-    template="plotly_dark",
-)
-st.plotly_chart(fig_bar)
+# 📊 Filter Data for the Selected Country and Apply Filters
+filtered_df = df[(df["location"] == selected_country) & 
+                 (df["date"] >= pd.to_datetime(date_range[0])) & 
+                 (df["date"] <= pd.to_datetime(date_range[1])) & 
+                 (df["new_cases"] >= new_cases_threshold)]
 
-# 📈 Scatter Plot: Total Tests vs. Total Cases
-st.subheader("🧪 Testing vs. Cases")
-fig_scatter = px.scatter(
-    df,
-    x="total_tests",
-    y="total_confirmed",
-    size="population",
-    color="continent",
-    hover_name="country",
-    log_x=True,
-    log_y=True,
-    title="Total Tests vs. Total Confirmed Cases (Log Scale)",
-    template="plotly_dark",
-)
-st.plotly_chart(fig_scatter)
+if filtered_df.empty:
+    st.warning(f"No data available for {selected_country} within the selected range. Try adjusting filters.")
+else:
+    # 📌 Show Key Metrics
+    total_cases = filtered_df["total_cases"].max()
+    total_deaths = filtered_df["total_deaths"].max()
+    new_cases = filtered_df["new_cases"].sum()
 
-# 🌍 Map of COVID-19 Cases (Bubble Map)
-st.subheader("🗺️ COVID-19 Cases Around the World")
-fig_map = px.scatter_geo(
-    df,
-    locations="country",
-    locationmode="country names",
-    size="total_confirmed",
-    color="continent",
-    hover_name="country",
-    title="Global COVID-19 Cases",
-    template="plotly_dark",
-    projection="natural earth",
-)
-st.plotly_chart(fig_map)
+    st.metric("Total Cases", f"{total_cases:,}")
+    st.metric("Total Deaths", f"{total_deaths:,}")
+    st.metric("New Cases in Selected Period", f"{new_cases:,}")
+
+    # 📊 Bar Chart: Total Cases, Deaths, and Recoveries
+    st.subheader("📊 Total Cases Breakdown")
+    fig_bar = px.bar(
+        x=["Total Cases", "Total Deaths"],
+        y=[total_cases, total_deaths],
+        labels={"x": "Category", "y": "Count"},
+        color=["Total Cases", "Total Deaths"],
+        title=f"Monkeypox Cases Breakdown in {selected_country}",
+        template="plotly_dark",
+    )
+    st.plotly_chart(fig_bar)
+
+    # 📈 Scatter Plot: New Cases vs. Total Cases
+    st.subheader("📍 New Cases vs. Total Cases")
+    fig_scatter = px.scatter(
+        filtered_df,
+        x="total_cases",
+        y="new_cases",
+        size="new_cases",
+        color="new_cases",
+        hover_name="date",
+        title="New Cases vs. Total Cases",
+        template="plotly_dark",
+    )
+    st.plotly_chart(fig_scatter)
+
+    # 📉 Carpet Plot: Total Cases Over Time
+    st.subheader("📉 Carpet Scatter Plot for Monkeypox Cases")
+    filtered_df["date_numeric"] = np.arange(len(filtered_df))  # Convert dates to numeric index
+
+    carpet = go.Carpet(
+        a=filtered_df["date_numeric"],
+        b=filtered_df["total_cases"],
+        carpet="carpet1",
+        aaxis=dict(title="Days Since First Case", color="gray"),
+        baxis=dict(title="Total Cases", color="gray"),
+    )
+
+    scatter = go.Scatter(
+        x=filtered_df["date_numeric"],
+        y=filtered_df["total_cases"],
+        mode='markers',
+        marker=dict(size=10, color=filtered_df["new_cases"], colorscale="Viridis", showscale=True),
+        name="Monkeypox Cases"
+    )
+
+    fig_carpet = go.Figure(data=[carpet, scatter])
+    fig_carpet.update_layout(
+        title=f"Carpet Scatter Plot for {selected_country}",
+        xaxis_title="Days Since First Case",
+        yaxis_title="Total Cases",
+        template="plotly_dark"
+    )
+    st.plotly_chart(fig_carpet)
+
+    # 🌍 Map of Monkeypox Cases (Bubble Map)
+    st.subheader("🗺️ Monkeypox Cases Around the World")
+    fig_map = px.scatter_geo(
+        df,
+        locations="location",
+        locationmode="country names",
+        size="total_cases",
+        color="new_cases",
+        hover_name="location",
+        title="Global Monkeypox Cases",
+        template="plotly_dark",
+        projection="natural earth",
+    )
+    st.plotly_chart(fig_map)
